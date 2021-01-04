@@ -1,9 +1,10 @@
 import os
 import time
-import logging
 
+import logging
 import requests
 import telegram
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,20 +17,31 @@ URL = 'https://praktikum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {
     'Authorization': f'OAuth {PRAKTIKUM_TOKEN}'
 }
+REQUEST_ERROR = ('Ошибка запроса по адресу: {url}, параметры: {params}, '
+                 '{headers}. Текст ошибки: {e}')
+BAD_STATUS = ('Попытка обращения к серверу: {url} имеет ошибку {error}. '
+              'Параметры: {params}')
+CODE_ERROR = ('Попытка обращения к серверу: {url}, параметры: {params}. '
+              'В результате присутствует {code}. Ошибка {error}.')
+STATUS = {
+    'rejected': 'К сожалению в работе нашлись ошибки.',
+    'approved': 'Ревьюеру всё понравилось, можно приступать к следующему уроку.'
+}
+STATUS_ERROR = 'Получен не ожидаемый статус работы: {status}'
+ANSWER = 'У вас проверили работу "{homework_name}" от {date}!\n\n{verdict}'
+BOT_ERROR = 'Бот столкнулся с ошибкой: {e}'
 
 
 def parse_homework_status(homework):
-    homework_name = homework.get('homework_name')
-    homework_status = homework.get('status')
-    if homework_name is None or homework_status is None:
-        logging.error('')
-        raise Exception('parse_homework_status recieved None as one of values')
-    if homework_status == 'rejected':
-        verdict = 'К сожалению в работе нашлись ошибки.'
-    else:
-        verdict = ('Ревьюеру всё понравилось, '
-                   'можно приступать к следующему уроку.')
-    return f'У вас проверили работу "{homework_name}"!\n\n{verdict}'
+    name = homework['homework_name']
+    status = homework['status']
+    date = homework['date_updated']
+    if status not in STATUS.keys():
+        raise ValueError(STATUS_ERROR.format(status=status))
+    verdict = STATUS[status]
+    return ANSWER.format(homework_name=name,
+                         verdict=verdict,
+                         date=date)
 
 
 def get_homework_statuses(current_timestamp):
@@ -37,18 +49,36 @@ def get_homework_statuses(current_timestamp):
         'from_date': current_timestamp
     }
     try:
-        homework_statuses = requests.get(URL, headers=HEADERS, params=params)
-        return homework_statuses.json()
-    except Exception as e:
-        logging.error(f'Error: {e}')
-        return {}
+        response = requests.get(URL, headers=HEADERS, params=params)
+    except requests.exceptions.HTTPError as e:
+        raise requests.exceptions.HTTPError(REQUEST_ERROR.format(
+            url=URL,
+            params=params,
+            headers=HEADERS,
+            e=e
+        ))
+    res = response.json()
+    if 'error' in res:
+        error = res['error']['error']
+        raise ValueError(BAD_STATUS.format(
+            url=URL,
+            error=error,
+            params=params
+        ))
+    if 'code' in res:
+        code = res['code']
+        error = res['message']
+        raise ValueError(CODE_ERROR.format(
+            url=URL,
+            params=params,
+            code=code,
+            error=error
+        ))
+    return res
 
 
 def send_message(message, bot_client):
-    try:
-        return bot_client.send_message(chat_id=CHAT_ID, text=message)
-    except Exception as e:
-        logging.error(f'Something wrong with bot working - {e}')
+    return bot_client.send_message(chat_id=CHAT_ID, text=message)
 
 
 def main():
@@ -65,9 +95,13 @@ def main():
             time.sleep(300)  # опрашивать раз в пять минут
 
         except Exception as e:
-            print(f'Бот столкнулся с ошибкой: {e}')
+            logging.error(BOT_ERROR.format(e=e))
             time.sleep(5)
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        filename=__file__ + '.log',
+        format='%(asctime)s %(funcName)s %(message)s'
+    )
     main()
