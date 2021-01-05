@@ -4,7 +4,6 @@ import time
 import logging
 import requests
 import telegram
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,64 +16,58 @@ URL = 'https://praktikum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {
     'Authorization': f'OAuth {PRAKTIKUM_TOKEN}'
 }
-REQUEST_ERROR = ('Ошибка запроса по адресу: {url}, параметры: {params}, '
-                 '{headers}. Текст ошибки: {e}')
-BAD_STATUS = ('Попытка обращения к серверу: {url} имеет ошибку {error}. '
-              'Параметры: {params}')
-CODE_ERROR = ('Попытка обращения к серверу: {url}, параметры: {params}. '
-              'В результате присутствует {code}. Ошибка {error}.')
-STATUS = {
+
+VERDICTS_OF_STATUS = {
     'rejected': 'К сожалению в работе нашлись ошибки.',
     'approved': 'Ревьюеру всё понравилось, можно приступать к следующему уроку.'
 }
 STATUS_ERROR = 'Получен не ожидаемый статус работы: {status}'
-ANSWER = 'У вас проверили работу "{homework_name}" от {date}!\n\n{verdict}'
-BOT_ERROR = 'Бот столкнулся с ошибкой: {e}'
+ANSWER = 'У вас проверили работу "{name}" от {date}!\n\n{verdict}'
+REQUEST_ERROR = ('Ошибка запроса по адресу: {url}, параметры: {params}, '
+                 '{headers}. Текст ошибки: {e}')
+CONNECTION_ERROR = ('Попытка обращения к серверу: {url} имеет ошибку {error}.'
+                    'Параметры: {params}')
+CODE_ERROR = ('Попытка обращения к серверу: {url}, параметры: {params}. '
+              'В результате присутствует {code}. Ошибка {error}.')
+BOT_ERROR = 'Бот столкнулся с ошибкой: {error}'
 
 
 def parse_homework_status(homework):
-    name = homework['homework_name']
     status = homework['status']
-    date = homework['date_updated']
-    if status not in STATUS.keys():
+    if status not in VERDICTS_OF_STATUS:
         raise ValueError(STATUS_ERROR.format(status=status))
-    verdict = STATUS[status]
-    return ANSWER.format(homework_name=name,
-                         verdict=verdict,
-                         date=date)
+    return ANSWER.format(name=homework['homework_name'],
+                         verdict=VERDICTS_OF_STATUS[status],
+                         date=homework['date_updated'])
 
 
 def get_homework_statuses(current_timestamp):
     params = {
         'from_date': current_timestamp
     }
+    data_source = dict(url=URL, headers=HEADERS, params=params)
     try:
-        response = requests.get(URL, headers=HEADERS, params=params)
-    except requests.exceptions.HTTPError as e:
-        raise requests.exceptions.HTTPError(REQUEST_ERROR.format(
+        response = requests.get(**data_source)
+    except requests.exceptions.RequestException:
+        raise requests.exceptions.RequestException(REQUEST_ERROR.format(
             url=URL,
             params=params,
             headers=HEADERS,
-            e=e
+            error=requests.exceptions.ConnectionError
         ))
-    res = response.json()
-    if 'error' in res:
-        error = res['error']['error']
-        raise ValueError(BAD_STATUS.format(
-            url=URL,
-            error=error,
-            params=params
+    json_response = response.json()
+    if 'error' in json_response:
+        raise ValueError(CONNECTION_ERROR.format(
+            error=json_response['error']['error'],
+            **data_source
         ))
-    if 'code' in res:
-        code = res['code']
-        error = res['message']
+    if 'code' in json_response:
         raise ValueError(CODE_ERROR.format(
-            url=URL,
-            params=params,
-            code=code,
-            error=error
+            code=json_response['code'],
+            error=json_response['message'],
+            **data_source
         ))
-    return res
+    return json_response
 
 
 def send_message(message, bot_client):
@@ -93,9 +86,8 @@ def main():
             current_timestamp = (new_homework.get('current_date',
                                                   current_timestamp))
             time.sleep(300)  # опрашивать раз в пять минут
-
         except Exception as e:
-            logging.error(BOT_ERROR.format(e=e))
+            logging.error(BOT_ERROR.format(error=e))
             time.sleep(5)
 
 
