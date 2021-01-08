@@ -23,12 +23,18 @@ VERDICTS_OF_STATUS = {
 }
 STATUS_ERROR = 'Получен не ожидаемый статус работы: {status}'
 ANSWER = 'У вас проверили работу "{name}" от {date}!\n\n{verdict}'
-REQUEST_ERROR = ('Ошибка запроса по адресу: {url}, параметры: {params}, '
-                 '{headers}. Текст ошибки: {e}')
-CONNECTION_ERROR = ('Попытка обращения к серверу: {url} имеет ошибку {error}.'
-                    'Параметры: {params}')
-CODE_ERROR = ('Попытка обращения к серверу: {url}, параметры: {params}. '
-              'В результате присутствует {code}. Ошибка {error}.')
+REQUEST_ERROR = (
+    'Ошибка запроса по адресу: {url}, параметры: {params}, '
+    '{headers}. Текст ошибки: {e}'
+)
+SERVER_ERROR = (
+    'Попытка обращения к серверу: {url} имеет ошибку {error}.'
+    'Параметры: {params}'
+)
+CODE_ERROR = (
+    'Попытка обращения к серверу: {url}, параметры: {params}. '
+    'В результате присутствует {code}. Ошибка {error}.'
+)
 BOT_ERROR = 'Бот столкнулся с ошибкой: {error}'
 
 
@@ -36,36 +42,35 @@ def parse_homework_status(homework):
     status = homework['status']
     if status not in VERDICTS_OF_STATUS:
         raise ValueError(STATUS_ERROR.format(status=status))
-    return ANSWER.format(name=homework['homework_name'],
-                         verdict=VERDICTS_OF_STATUS[status],
-                         date=homework['date_updated'])
+    return ANSWER.format(
+        name=homework['homework_name'],
+        verdict=VERDICTS_OF_STATUS[status],
+        date=homework['date_updated']
+    )
 
 
 def get_homework_statuses(current_timestamp):
-    params = {
+    arguments = dict(url=URL, headers=HEADERS, params={
         'from_date': current_timestamp
-    }
-    data_source = dict(url=URL, headers=HEADERS, params=params)
+    })
     try:
-        response = requests.get(**data_source)
-    except requests.exceptions.RequestException:
-        raise requests.exceptions.RequestException(REQUEST_ERROR.format(
-            url=URL,
-            params=params,
-            headers=HEADERS,
-            error=requests.exceptions.ConnectionError
+        response = requests.get(**arguments)
+    except requests.exceptions.RequestException as error:
+        raise ConnectionError(REQUEST_ERROR.format(
+            error=str(error),
+            **arguments
         ))
     json_response = response.json()
     if 'error' in json_response:
-        raise ValueError(CONNECTION_ERROR.format(
+        raise ValueError(SERVER_ERROR.format(
             error=json_response['error']['error'],
-            **data_source
+            **arguments
         ))
     if 'code' in json_response:
         raise ValueError(CODE_ERROR.format(
             code=json_response['code'],
             error=json_response['message'],
-            **data_source
+            **arguments
         ))
     return json_response
 
@@ -81,13 +86,16 @@ def main():
         try:
             new_homework = get_homework_statuses(current_timestamp)
             if new_homework.get('homeworks'):
-                (send_message(parse_homework_status
-                              (new_homework.get('homeworks')[0]), bot_client))
-            current_timestamp = (new_homework.get('current_date',
-                                                  current_timestamp))
-            time.sleep(1200)  # опрашивать раз в пять минут
-        except Exception as e:
-            logging.error(BOT_ERROR.format(error=e))
+                send_message(parse_homework_status(
+                    new_homework.get('homeworks')[0]), bot_client
+                )
+            current_timestamp = new_homework.get(
+                'current_date',
+                current_timestamp
+            )
+            time.sleep(300)  # опрашивать раз в пять минут
+        except Exception as error:
+            logging.error(BOT_ERROR.format(error=error))
             time.sleep(5)
 
 
